@@ -2,8 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/pwpon500/caplance/util"
-	"github.com/pwpon500/caplance/util/capture"
+	"github.com/pwpon500/caplance/balancer"
 	"net"
 )
 
