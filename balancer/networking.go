@@ -14,6 +14,7 @@ import (
 type Balancer struct {
 	backends *backend.BackendHandler
 	vip      net.IP
+	packets  chan gopacket.Packet
 }
 
 func New(startVIP net.IP, capacity int64) (*Balancer, error) {
@@ -21,7 +22,11 @@ func New(startVIP net.IP, capacity int64) (*Balancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Balancer{backends: back, vip: startVIP}, nil
+	return &Balancer{backends: back, vip: startVIP, packets: make(chan gopacket.Packet)}, nil
+}
+
+func (b *Balancer) Add(name string, ip net.IP) error {
+	return b.backends.Add(name, ip)
 }
 
 func (b *Balancer) Start() {
@@ -56,17 +61,27 @@ func (b *Balancer) listen(deviceName string) {
 	handleErr(err)
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	for i := 0; i < 20; i++ {
+		go b.handlePacket()
+	}
 	for packet := range packetSource.Packets() {
-		go b.handlePacket(packet)
+		b.packets <- packet
 	}
 }
 
-func (b *Balancer) handlePacket(packet gopacket.Packet) {
-	_, dst := packet.NetworkLayer().NetworkFlow().Endpoints()
-	backend, err := b.backends.Get(dst.String())
-	if err != nil {
-		fmt.Println("Packet received with no backends. Packet dropped.")
-		return
+func (b *Balancer) handlePacket() {
+	for {
+		packet := <-b.packets
+		netLayer := packet.NetworkLayer()
+		if netLayer != nil {
+			_, dst := netLayer.NetworkFlow().Endpoints()
+			backend, err := b.backends.Get(dst.String())
+			if err != nil {
+				fmt.Println("Packet received with no backends. Packet dropped.")
+				return
+			}
+			fmt.Println(backend)
+		}
 	}
 }
 

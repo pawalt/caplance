@@ -8,10 +8,14 @@ import (
 
 func main() {
 	vip := net.ParseIP("10.0.0.50")
-	dev, err := util.AttachVIP(vip)
+	b, err := balancer.New(vip, 53)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("listening on ", vip.String())
-	capture.Listen(dev, vip)
+	err = b.Add("b1", net.ParseIP("192.168.1.1"))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("starting")
+	b.Start()
 }
