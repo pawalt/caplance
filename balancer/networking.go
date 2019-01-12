@@ -101,7 +101,7 @@ func attachVIP(vip net.IP) (string, error) {
 			if ipNet.Contains(vip) {
 				if foundDevice == "" {
 					foundDevice = device.Name
-				} else {
+				} else if foundDevice != device.Name {
 					return "", errors.New("Multiple devices on the same subnet. VIP cannot be assigned.")
 				}
 			}
