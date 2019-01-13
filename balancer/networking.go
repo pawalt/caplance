@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/pwpon500/caplance/balancer/backend"
 	"github.com/vishvananda/netlink"
@@ -72,17 +73,43 @@ func (b *Balancer) listen(deviceName string) {
 func (b *Balancer) handlePacket() {
 	for {
 		packet := <-b.packets
-		netLayer := packet.NetworkLayer()
-		if netLayer != nil {
-			_, dst := netLayer.NetworkFlow().Endpoints()
-			backend, err := b.backends.Get(dst.String())
-			if err != nil {
-				fmt.Println("Packet received with no backends. Packet dropped.")
-				return
-			}
-			fmt.Println(backend)
+		hostPort, ipLayer := getPacketDetails(packet)
+		if hostPort == "" {
+			continue
 		}
+		backend, err := b.backends.Get(hostPort)
+		if err != nil {
+			fmt.Println("Packet received with no backends. Packet dropped.")
+			continue
+		}
+		fmt.Println(backend)
+		toWrite := []gopacket.SerializableLayer{
+			ipLayer,
+		}
+		fmt.Println(toWrite)
 	}
+}
+
+func getPacketDetails(packet gopacket.Packet) (string, *layers.IPv4) {
+	ipLayer := packet.Layer(layers.LayerTypeIPv4)
+	if ipLayer == nil {
+		return "", nil
+	}
+	ip, _ := ipLayer.(*layers.IPv4)
+
+	tcpLayer := packet.Layer(layers.LayerTypeTCP)
+	if tcpLayer == nil {
+		udpLayer := packet.Layer(layers.LayerTypeUDP)
+		if udpLayer == nil {
+			return "", nil
+		}
+		udp, _ := udpLayer.(*layers.UDP)
+
+		return ip.SrcIP.String() + ":" + string(udp.SrcPort), ip
+	}
+	tcp, _ := tcpLayer.(*layers.TCP)
+
+	return ip.SrcIP.String() + ":" + string(tcp.SrcPort), ip
 }
 
 func genTunIPNet(ip net.IP) *net.IPNet {
