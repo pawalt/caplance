@@ -84,6 +84,22 @@ func (b *Balancer) handlePacket() {
 		}
 		fmt.Println(backend)
 		toWrite := []gopacket.SerializableLayer{
+			&layers.Ethernet{
+				SrcMAC:       net.HardwareAddr{142, 122, 18, 195, 169, 113},
+				DstMAC:       net.HardwareAddr{58, 86, 107, 105, 89, 94},
+				EthernetType: layers.EthernetTypeIPv4,
+			},
+			&layers.IPv4{
+				Version:  4,
+				SrcIP:    net.IP{192, 168, 1, 1},
+				DstIP:    net.IP{192, 168, 1, 2},
+				Protocol: layers.IPProtocolGRE,
+				TTL:      64,
+				IHL:      5,
+			},
+			&layers.GRE{
+				Protocol: layers.EthernetTypeIPv4,
+			},
 			ipLayer,
 		}
 		fmt.Println(toWrite)
