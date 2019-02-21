@@ -10,11 +10,13 @@ import (
 	"github.com/vishvananda/netlink"
 	"net"
 	"time"
+	"strconv"
 )
 
 type Balancer struct {
 	backends *backend.BackendHandler
 	vip      net.IP
+	connectIP net.IP
 	packets  chan gopacket.Packet
 }
 
@@ -27,13 +29,36 @@ func New(startVIP net.IP, capacity int64) (*Balancer, error) {
 }
 
 func (b *Balancer) Add(name string, ip net.IP) error {
-	return b.backends.Add(name, ip)
+	ind := 0
+	for linkExists("gre" + strconv.Itoa(ind)){
+		ind++
+	}
+	srcIP, dstIP, err := ipsFromIndex(ind)
+	if err != nil {
+		return err
+	}
+	tun := createTun(b.connectIP, ip, srcIP, dstIP, "gre" + strconv.Itoa(ind))
+	return b.backends.Add(name, tun.Name)
 }
 
 func (b *Balancer) Start() {
 	dev, err := attachVIP(b.vip)
 	handleErr(err)
 	b.listen(dev)
+}
+
+func ipsFromIndex (index int) (net.IP, net.IP, error) {
+	if index >= 256 * 64 {
+		return nil, nil, errors.New("More backends than can fit into consecutive 192.168.0.0/30 subnets")
+	}
+	src := net.IPv4(192, 168, byte(index/64), byte((4 * index + 1) % 256))
+	dest := net.IPv4(192, 168, byte(index/64), byte((4 * index + 2) % 256))
+	return src, dest, nil
+}
+
+func linkExists(name string) bool {
+	_, err := netlink.LinkByName(name)
+	return err == nil
 }
 
 func createTun(localIP, remoteIP, tunIP, remoteTunIP net.IP, name string) *netlink.Gretun {
@@ -71,6 +96,8 @@ func (b *Balancer) listen(deviceName string) {
 }
 
 func (b *Balancer) handlePacket() {
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{}
 	for {
 		packet := <-b.packets
 		hostPort, ipLayer := getPacketDetails(packet)
@@ -82,27 +109,14 @@ func (b *Balancer) handlePacket() {
 			fmt.Println("Packet received with no backends. Packet dropped.")
 			continue
 		}
-		fmt.Println(backend)
-		toWrite := []gopacket.SerializableLayer{
-			&layers.Ethernet{
-				SrcMAC:       net.HardwareAddr{142, 122, 18, 195, 169, 113},
-				DstMAC:       net.HardwareAddr{58, 86, 107, 105, 89, 94},
-				EthernetType: layers.EthernetTypeIPv4,
-			},
-			&layers.IPv4{
-				Version:  4,
-				SrcIP:    net.IP{192, 168, 1, 1},
-				DstIP:    net.IP{192, 168, 1, 2},
-				Protocol: layers.IPProtocolGRE,
-				TTL:      64,
-				IHL:      5,
-			},
-			&layers.GRE{
-				Protocol: layers.EthernetTypeIPv4,
-			},
-			ipLayer,
+		handle, err := pcap.OpenLive(backend, 1600, false, 30 * time.Second)
+		if err != nil {
+			fmt.Println("Error opening requested device " + backend)
+			continue
 		}
-		fmt.Println(toWrite)
+		ipLayer.SerializeTo(buf, opts)
+		handle.WritePacketData(buf.Bytes())
+		handle.Close()
 	}
 }
 
