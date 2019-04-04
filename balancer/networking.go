@@ -8,6 +8,7 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/pwpon500/caplance/balancer/backend"
 	"github.com/vishvananda/netlink"
+	"strings"
 	"net"
 	"time"
 	"strconv"
@@ -20,15 +21,19 @@ type Balancer struct {
 	packets  chan gopacket.Packet
 }
 
-func New(startVIP net.IP, capacity int64) (*Balancer, error) {
+func New(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
 	back, err := backend.New(capacity)
 	if err != nil {
 		return nil, err
 	}
-	return &Balancer{backends: back, vip: startVIP, packets: make(chan gopacket.Packet)}, nil
+	return &Balancer{backends: back, vip: startVIP, connectIP: toConnect, packets: make(chan gopacket.Packet)}, nil
 }
 
 func (b *Balancer) Add(name string, ip net.IP) error {
+	if devName, err := b.backends.Get(name); err != nil && linkExists(devName) {
+		fmt.Println(devName)
+		return nil
+	}
 	ind := 0
 	for linkExists("gre" + strconv.Itoa(ind)){
 		ind++
@@ -37,6 +42,8 @@ func (b *Balancer) Add(name string, ip net.IP) error {
 	if err != nil {
 		return err
 	}
+	fmt.Println(name)
+	fmt.Println(strconv.Itoa(ind))
 	tun := createTun(b.connectIP, ip, srcIP, dstIP, "gre" + strconv.Itoa(ind))
 	return b.backends.Add(name, tun.Name)
 }
@@ -57,8 +64,17 @@ func ipsFromIndex (index int) (net.IP, net.IP, error) {
 }
 
 func linkExists(name string) bool {
-	_, err := netlink.LinkByName(name)
-	return err == nil
+	if (name == ""){
+		return false
+	}
+	interfaces, err := net.Interfaces()
+	handleErr(err)
+	for i := range interfaces {
+		if strings.Contains(interfaces[i].Name, name){
+			return true
+		}
+	}
+	return false
 }
 
 func createTun(localIP, remoteIP, tunIP, remoteTunIP net.IP, name string) *netlink.Gretun {

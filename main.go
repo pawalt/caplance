@@ -8,11 +8,11 @@ import (
 
 func main() {
 	vip := net.ParseIP("10.0.0.50")
-	b, err := balancer.New(vip, 53)
+	b, err := balancer.New(vip, net.ParseIP("10.0.0.1"), 53)
 	if err != nil {
 		panic(err)
 	}
-	err = b.Add("b1", net.ParseIP("192.168.1.1"))
+	err = b.Add("b1", net.ParseIP("10.0.0.2"))
 	if err != nil {
 		panic(err)
 	}
