@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/pwpon500/caplance/balancer"
 	"net"
+
+	"github.com/pwpon500/caplance/balancer"
 )
 
 func main() {
