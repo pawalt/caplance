@@ -3,39 +3,54 @@ package balancer
 import (
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/pwpon500/caplance/balancer/backend"
 	"github.com/vishvananda/netlink"
-	"strings"
-	"net"
-	"time"
-	"strconv"
 )
 
+// Balancer is the main data struct for the load balancer
 type Balancer struct {
-	backends *backend.BackendHandler
-	vip      net.IP
-	connectIP net.IP
-	packets  chan gopacket.Packet
+	backends     *backend.BackendHandler // maglev hashtable of backends to their GRE device names
+	vip          net.IP                  // VIP the balancer is operating off of
+	connectIP    net.IP                  // IP for the RPC between backends and balancer
+	packets      chan gopacket.Packet    // channel of queued up packets
+	stopChan     chan os.Signal          // channel to listen for graceful stop
+	listenHandle *pcap.Handle            // handle for the vip listener
 }
 
+// New creates new new Balancer. Throws error if capacity is not prime
 func New(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
 	back, err := backend.New(capacity)
 	if err != nil {
 		return nil, err
 	}
-	return &Balancer{backends: back, vip: startVIP, connectIP: toConnect, packets: make(chan gopacket.Packet)}, nil
+
+	return &Balancer{
+		backends:  back,
+		vip:       startVIP,
+		connectIP: toConnect,
+		packets:   make(chan gopacket.Packet),
+		stopChan:  make(chan os.Signal)}, nil
 }
 
+// Add adds a new backend and creates a tunnel between said backend and the LB
 func (b *Balancer) Add(name string, ip net.IP) error {
 	if devName, err := b.backends.Get(name); err != nil && linkExists(devName) {
 		fmt.Println(devName)
 		return nil
 	}
 	ind := 0
-	for linkExists("gre" + strconv.Itoa(ind)){
+	for linkExists("gre" + strconv.Itoa(ind)) {
 		ind++
 	}
 	srcIP, dstIP, err := ipsFromIndex(ind)
@@ -44,33 +59,60 @@ func (b *Balancer) Add(name string, ip net.IP) error {
 	}
 	fmt.Println(name)
 	fmt.Println(strconv.Itoa(ind))
-	tun := createTun(b.connectIP, ip, srcIP, dstIP, "gre" + strconv.Itoa(ind))
+	tun := createTun(b.connectIP, ip, srcIP, dstIP, "gre"+strconv.Itoa(ind))
 	return b.backends.Add(name, tun.Name)
 }
 
-func (b *Balancer) Start() {
+// Start attaches the VIP and starts the load balancer
+func (b *Balancer) Start() error {
 	dev, err := attachVIP(b.vip)
-	handleErr(err)
+	if err != nil {
+		return err
+	}
+	signal.Notify(b.stopChan, syscall.SIGTERM)
+	signal.Notify(b.stopChan, syscall.SIGINT)
+	go func() {
+		defer func() {
+			if b.listenHandle != nil {
+				b.listenHandle.Close()
+			}
+			os.Exit(0)
+		}()
+		sig := <-b.stopChan
+		fmt.Printf("caught sig: %+v", sig)
+	}()
 	b.listen(dev)
+	return nil
 }
 
-func ipsFromIndex (index int) (net.IP, net.IP, error) {
-	if index >= 256 * 64 {
+// stops the currently running lb by appending onto `stop`
+func (b *Balancer) Stop() error {
+	if b.listenHandle == nil {
+		return errors.New("unstarted balancer cannot be stopped")
+	}
+
+	b.stopChan <- syscall.SIGTERM
+
+	return nil
+}
+
+func ipsFromIndex(index int) (net.IP, net.IP, error) {
+	if index >= 256*64 {
 		return nil, nil, errors.New("More backends than can fit into consecutive 192.168.0.0/30 subnets")
 	}
-	src := net.IPv4(192, 168, byte(index/64), byte((4 * index + 1) % 256))
-	dest := net.IPv4(192, 168, byte(index/64), byte((4 * index + 2) % 256))
+	src := net.IPv4(192, 168, byte(index/64), byte((4*index+1)%256))
+	dest := net.IPv4(192, 168, byte(index/64), byte((4*index+2)%256))
 	return src, dest, nil
 }
 
 func linkExists(name string) bool {
-	if (name == ""){
+	if name == "" {
 		return false
 	}
 	interfaces, err := net.Interfaces()
 	handleErr(err)
 	for i := range interfaces {
-		if strings.Contains(interfaces[i].Name, name){
+		if strings.Contains(interfaces[i].Name, name) {
 			return true
 		}
 	}
@@ -94,15 +136,15 @@ func createTun(localIP, remoteIP, tunIP, remoteTunIP net.IP, name string) *netli
 }
 
 func (b *Balancer) listen(deviceName string) {
-	handle, err := pcap.OpenLive(deviceName, 1024, false, 30*time.Second)
+	var err error
+	b.listenHandle, err = pcap.OpenLive(deviceName, 1024, false, 30*time.Second)
 	handleErr(err)
-	defer handle.Close()
 
 	filter := "dst host " + b.vip.String()
-	err = handle.SetBPFFilter(filter)
+	err = b.listenHandle.SetBPFFilter(filter)
 	handleErr(err)
 
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	packetSource := gopacket.NewPacketSource(b.listenHandle, b.listenHandle.LinkType())
 	for i := 0; i < 20; i++ {
 		go b.handlePacket()
 	}
@@ -125,7 +167,7 @@ func (b *Balancer) handlePacket() {
 			fmt.Println("Packet received with no backends. Packet dropped.")
 			continue
 		}
-		handle, err := pcap.OpenLive(backend, 1600, false, 30 * time.Second)
+		handle, err := pcap.OpenLive(backend, 1600, false, 30*time.Second)
 		if err != nil {
 			fmt.Println("Error opening requested device " + backend)
 			continue
@@ -175,13 +217,13 @@ func attachVIP(vip net.IP) (string, error) {
 				if foundDevice == "" {
 					foundDevice = device.Name
 				} else if foundDevice != device.Name {
-					return "", errors.New("Multiple devices on the same subnet. VIP cannot be assigned.")
+					return "", errors.New("multiple devices on the same subnet. VIP cannot be assigned")
 				}
 			}
 		}
 	}
 	if foundDevice == "" {
-		return "", errors.New("No device on same subnet as VIP. VIP cannot be assigned.")
+		return "", errors.New("no device on same subnet as VIP. VIP cannot be assigned")
 	}
 	dev, err := netlink.LinkByName(foundDevice)
 	if err != nil {
