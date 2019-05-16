@@ -1,26 +1,40 @@
 #!/usr/bin/env python2
-""" This script provides a basic switch topo."""
+""" This script runs the tests for this project.
+Run it in a mininet environment with the following command:
+sudo ./mininet_run.py
+
+or
+
+sudo ./mininet_run -d
+
+for debug-level output"""
 
 from functools import partial
 from mininet.topo import SingleSwitchTopo
 from mininet.net import Mininet
-from mininet.cli import CLI
 from mininet.node import Host, OVSController
+from optparse import OptionParser
 from mininet.log import setLogLevel
 
 
-def simple_test():
+def run_tests():
     "Create and test a simple network"
     topo = SingleSwitchTopo(k=2)
     private_dirs = ['/run', ('/var/run', '/tmp/%(name)s/var/run'), '/var/mn']
     host = partial(Host, privateDirs=private_dirs)
     net = Mininet(topo=topo, host=host, controller=OVSController)
     net.start()
-    CLI(net)
+    h1 = net.get("h1")
+    print h1.cmd("go test")
     net.stop()
 
 
 if __name__ == '__main__':
-    # Tell mininet to print useful information
-    setLogLevel('info')
-    simple_test()
+    parser = OptionParser()
+    parser.add_option("-d", "--debug", dest="debug",
+                      action="store_true", default=False)
+    options, args = parser.parse_args()
+    if options.debug:
+        setLogLevel("info")
+
+    run_tests()

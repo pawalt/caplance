@@ -76,7 +76,7 @@ func (b *Balancer) Start() error {
 			if b.listenHandle != nil {
 				b.listenHandle.Close()
 			}
-			os.exit(0)
+			os.Exit(0)
 		}()
 		sig := <-b.stopChan
 		fmt.Printf("caught sig: %+v", sig)
