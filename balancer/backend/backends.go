@@ -1,9 +1,6 @@
 package backend
 
 import (
-	"errors"
-	"math/big"
-
 	"github.com/kkdai/maglev"
 )
 
@@ -17,10 +14,11 @@ type BackendHandler struct {
 
 // New creates a new BackendHandler
 func New(capacity int64) (*BackendHandler, error) {
-	if !big.NewInt(capacity).ProbablyPrime(10) {
-		return nil, errors.New("Capacity not prime")
+	mag, err := maglev.NewMaglev([]string{}, uint64(capacity))
+	if err != nil {
+		return nil, err
 	}
-	return &BackendHandler{maglev.NewMaglev([]string{}, uint64(capacity)), make(map[string]string)}, nil
+	return &BackendHandler{mag, make(map[string]string)}, nil
 }
 
 // Get gets the backend device name for a given string. Returns error if something goes wrong in

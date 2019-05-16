@@ -1,5 +1,7 @@
 {
-    "python.pythonPath": "/usr/bin/python",
-    "python.linting.pylintEnabled": true,
-    "go.formatTool": "goimports"
+    "python.pythonPath": "/usr/bin/python2",
+    "python.linting.pylintEnabled": false,
+    "go.formatTool": "goimports",
+    "python.linting.flake8Enabled": true,
+    "python.linting.enabled": true
 }

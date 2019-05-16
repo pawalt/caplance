@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/gopacket"
@@ -17,10 +20,12 @@ import (
 
 // Balancer is the main data struct for the load balancer
 type Balancer struct {
-	backends  *backend.BackendHandler // maglev hashtable of backends to their GRE device names
-	vip       net.IP                  // VIP the balancer is operating off of
-	connectIP net.IP                  // IP for the RPC between backends and balancer
-	packets   chan gopacket.Packet    // channel of queued up packets
+	backends     *backend.BackendHandler // maglev hashtable of backends to their GRE device names
+	vip          net.IP                  // VIP the balancer is operating off of
+	connectIP    net.IP                  // IP for the RPC between backends and balancer
+	packets      chan gopacket.Packet    // channel of queued up packets
+	stopChan     chan os.Signal          // channel to listen for graceful stop
+	listenHandle *pcap.Handle            // handle for the vip listener
 }
 
 // New creates new new Balancer. Throws error if capacity is not prime
@@ -30,7 +35,12 @@ func New(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
 		return nil, err
 	}
 
-	return &Balancer{backends: back, vip: startVIP, connectIP: toConnect, packets: make(chan gopacket.Packet)}, nil
+	return &Balancer{
+		backends:  back,
+		vip:       startVIP,
+		connectIP: toConnect,
+		packets:   make(chan gopacket.Packet),
+		stopChan:  make(chan os.Signal)}, nil
 }
 
 // Add adds a new backend and creates a tunnel between said backend and the LB
@@ -59,7 +69,30 @@ func (b *Balancer) Start() error {
 	if err != nil {
 		return err
 	}
+	signal.Notify(b.stopChan, syscall.SIGTERM)
+	signal.Notify(b.stopChan, syscall.SIGINT)
+	go func() {
+		defer func() {
+			if b.listenHandle != nil {
+				b.listenHandle.Close()
+			}
+			os.exit(0)
+		}()
+		sig := <-b.stopChan
+		fmt.Printf("caught sig: %+v", sig)
+	}()
 	b.listen(dev)
+	return nil
+}
+
+// stops the currently running lb by appending onto `stop`
+func (b *Balancer) Stop() error {
+	if b.listenHandle == nil {
+		return errors.New("unstarted balancer cannot be stopped")
+	}
+
+	b.stopChan <- syscall.SIGTERM
+
 	return nil
 }
 
@@ -103,15 +136,15 @@ func createTun(localIP, remoteIP, tunIP, remoteTunIP net.IP, name string) *netli
 }
 
 func (b *Balancer) listen(deviceName string) {
-	handle, err := pcap.OpenLive(deviceName, 1024, false, 30*time.Second)
+	var err error
+	b.listenHandle, err = pcap.OpenLive(deviceName, 1024, false, 30*time.Second)
 	handleErr(err)
-	defer handle.Close()
 
 	filter := "dst host " + b.vip.String()
-	err = handle.SetBPFFilter(filter)
+	err = b.listenHandle.SetBPFFilter(filter)
 	handleErr(err)
 
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	packetSource := gopacket.NewPacketSource(b.listenHandle, b.listenHandle.LinkType())
 	for i := 0; i < 20; i++ {
 		go b.handlePacket()
 	}
