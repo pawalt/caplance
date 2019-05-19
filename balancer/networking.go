@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,9 +27,11 @@ type Balancer struct {
 	packets      chan gopacket.Packet    // channel of queued up packets
 	stopChan     chan os.Signal          // channel to listen for graceful stop
 	listenHandle *pcap.Handle            // handle for the vip listener
+	testFlag     bool                    // flag to check if we're in test mode
+	mux          sync.Mutex              // lock to ensure we don't start and stop at the same time
 }
 
-// New creates new new Balancer. Throws error if capacity is not prime
+// New creates new Balancer. Throws error if capacity is not prime
 func New(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
 	back, err := backend.New(capacity)
 	if err != nil {
@@ -40,7 +43,20 @@ func New(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
 		vip:       startVIP,
 		connectIP: toConnect,
 		packets:   make(chan gopacket.Packet),
-		stopChan:  make(chan os.Signal)}, nil
+		stopChan:  make(chan os.Signal),
+		testFlag:  false}, nil
+}
+
+// NewTest creates new Balancer with the testing flag on
+func NewTest(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
+	back, err := New(startVIP, toConnect, capacity)
+	if err != nil {
+		return nil, err
+	}
+
+	back.testFlag = true
+
+	return back, nil
 }
 
 // Add adds a new backend and creates a tunnel between said backend and the LB
@@ -65,27 +81,44 @@ func (b *Balancer) Add(name string, ip net.IP) error {
 
 // Start attaches the VIP and starts the load balancer
 func (b *Balancer) Start() error {
+	b.mux.Lock()
 	dev, err := attachVIP(b.vip)
+	if err != nil {
+		return err
+	}
+	link, err := netlink.LinkByName(dev)
 	if err != nil {
 		return err
 	}
 	signal.Notify(b.stopChan, syscall.SIGTERM)
 	signal.Notify(b.stopChan, syscall.SIGINT)
 	go func() {
+		graceful := false
 		defer func() {
+			b.mux.Lock()
+			fmt.Println("0")
 			if b.listenHandle != nil {
 				b.listenHandle.Close()
 			}
-			os.Exit(0)
+			fmt.Println("1")
+			vipNet := &net.IPNet{IP: b.vip, Mask: net.CIDRMask(32, 32)}
+			netlink.AddrDel(link, &netlink.Addr{IPNet: vipNet})
+			fmt.Println("2")
+			if graceful && !b.testFlag {
+				os.Exit(0)
+			}
+			b.mux.Unlock()
 		}()
 		sig := <-b.stopChan
-		fmt.Printf("caught sig: %+v", sig)
+		graceful = true
+		fmt.Printf("caught sig: %+v \n", sig)
 	}()
+	b.mux.Unlock()
 	b.listen(dev)
 	return nil
 }
 
-// stops the currently running lb by appending onto `stop`
+// Stop stops the currently running lb by appending onto `stop`
 func (b *Balancer) Stop() error {
 	if b.listenHandle == nil {
 		return errors.New("unstarted balancer cannot be stopped")
@@ -94,6 +127,12 @@ func (b *Balancer) Stop() error {
 	b.stopChan <- syscall.SIGTERM
 
 	return nil
+}
+
+// WaitForUnlock waits until the mutex lock is freed
+func (b *Balancer) WaitForUnlock() {
+	b.mux.Lock()
+	b.mux.Unlock()
 }
 
 func ipsFromIndex(index int) (net.IP, net.IP, error) {
