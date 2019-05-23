@@ -1,22 +1,21 @@
 package main
 
 import (
-	"fmt"
-	"net"
+	"flag"
+	"os"
 
-	"github.com/pwpon500/caplance/balancer"
+	"github.com/pwpon500/caplance/setups"
+)
+
+var (
+	setupName    = flag.String("setup", "", "name of test setup to create")
+	teardownFlag = flag.Bool("teardown", false, "run teardown instead of build setup")
 )
 
 func main() {
-	vip := net.ParseIP("10.0.0.50")
-	b, err := balancer.New(vip, net.ParseIP("10.0.0.1"), 53)
-	if err != nil {
-		panic(err)
+	flag.Parse()
+	if *setupName != "" {
+		setups.RunSetup(*setupName, *teardownFlag)
+		os.Exit(0)
 	}
-	err = b.Add("b1", net.ParseIP("10.0.0.2"))
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("starting")
-	b.Start()
 }

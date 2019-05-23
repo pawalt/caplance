@@ -11,19 +11,19 @@ func TestNonPrimeCapacity(t *testing.T) {
 	assert(t, err != nil, "error thrown for non-prime capacity")
 }
 
-func TestSingleBalancer(t *testing.T) {
+func TestSingleBackend(t *testing.T) {
 	back, err := backend.New(3)
 	ok(t, err)
 
 	back.Add("b1", "gre0")
 	expected := "gre0"
-	actual, err := back.Get("192.168.1.2:789")
+	actual, err := back.Get("10.0.0.2:53686")
 	ok(t, err)
 
 	equals(t, expected, actual)
 }
 
-func TestBalancerRemove(t *testing.T) {
+func TestBackendRemove(t *testing.T) {
 	back, err := backend.New(3)
 	ok(t, err)
 
