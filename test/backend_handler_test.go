@@ -3,16 +3,16 @@ package test
 import (
 	"testing"
 
-	"github.com/pwpon500/caplance/balancer/backend"
+	"github.com/pwpon500/caplance/balancer/backends"
 )
 
 func TestNonPrimeCapacity(t *testing.T) {
-	_, err := backend.New(10)
+	_, err := backends.NewHandler(10)
 	assert(t, err != nil, "error thrown for non-prime capacity")
 }
 
 func TestSingleBackend(t *testing.T) {
-	back, err := backend.New(3)
+	back, err := backends.NewHandler(3)
 	ok(t, err)
 
 	back.Add("b1", "gre0")
@@ -24,7 +24,7 @@ func TestSingleBackend(t *testing.T) {
 }
 
 func TestBackendRemove(t *testing.T) {
-	back, err := backend.New(3)
+	back, err := backends.NewHandler(3)
 	ok(t, err)
 
 	m := make(map[string]string)

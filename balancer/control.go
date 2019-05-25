@@ -9,43 +9,42 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/pwpon500/caplance/balancer/backend"
+	"github.com/pwpon500/caplance/balancer/backends"
 	"github.com/vishvananda/netlink"
 )
 
 // Balancer is the main data struct for the load balancer
 type Balancer struct {
-	backends  *backend.BackendHandler // maglev hashtable of backends to their GRE device names
-	vip       net.IP                  // VIP the balancer is operating off of
-	connectIP net.IP                  // IP for the RPC between backends and balancer
-	packets   chan rawPacket          // channel of queued up packets
-	stopChan  chan os.Signal          // channel to listen for graceful stop
-	listener  *net.IPConn             // vip listener
-	testFlag  bool                    // flag to check if we're in test mode
-	mux       sync.Mutex              // lock to ensure we don't start and stop at the same time
-	ipHeaders [][]byte                // prebuilt ip headers to append onto encapsulated packets
+	backendMap *backends.Handler // maglev hashtable of backends to their GRE device names
+	vip        net.IP            // VIP the balancer is operating off of
+	connectIP  net.IP            // IP for the RPC between backends and balancer
+	packets    chan rawPacket    // channel of queued up packets
+	stopChan   chan os.Signal    // channel to listen for graceful stop
+	listener   *net.IPConn       // vip listener
+	testFlag   bool              // flag to check if we're in test mode
+	mux        sync.Mutex        // lock to ensure we don't start and stop at the same time
+	ipHeaders  [][]byte          // prebuilt ip headers to append onto encapsulated packets
 }
 
 type rawPacket struct {
 	payload []byte
 	size    int
-	//	addr    *net.IPAddr
 }
 
 // New creates new Balancer. Throws error if capacity is not prime
 func New(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
-	back, err := backend.New(capacity)
+	back, err := backends.NewHandler(capacity)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Balancer{
-		backends:  back,
-		vip:       startVIP,
-		connectIP: toConnect,
-		packets:   make(chan rawPacket),
-		stopChan:  make(chan os.Signal),
-		testFlag:  false}, nil
+		backendMap: back,
+		vip:        startVIP,
+		connectIP:  toConnect,
+		packets:    make(chan rawPacket),
+		stopChan:   make(chan os.Signal),
+		testFlag:   false}, nil
 }
 
 // NewTest creates new Balancer with the testing flag on
@@ -62,7 +61,7 @@ func NewTest(startVIP, toConnect net.IP, capacity int64) (*Balancer, error) {
 
 // Add adds a new backend and creates a tunnel between said backend and the LB
 func (b *Balancer) Add(name string, ip net.IP) error {
-	return b.backends.Add(name, "well hello there")
+	return b.backendMap.Add(name, ip)
 }
 
 // Start attaches the VIP and starts the load balancer
@@ -82,14 +81,22 @@ func (b *Balancer) Start() error {
 		graceful := false
 		defer func() {
 			b.mux.Lock()
+
 			if b.listener != nil {
 				b.listener.Close()
 			}
+			allBackends := b.backendMap.GetBackends()
+			for _, back := range allBackends {
+				back.Writer.Close()
+			}
+
 			vipNet := &net.IPNet{IP: b.vip, Mask: net.CIDRMask(32, 32)}
 			netlink.AddrDel(link, &netlink.Addr{IPNet: vipNet})
+
 			if graceful && !b.testFlag {
 				os.Exit(0)
 			}
+
 			b.mux.Unlock()
 		}()
 		sig := <-b.stopChan

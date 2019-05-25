@@ -2,7 +2,6 @@ package balancer
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -39,7 +38,7 @@ func initBufPool(size int) *sync.Pool {
 // I could be convinced to listen on more than tcp and udp, but it would have
 // to be a very convincing argument. As it sits, I don't see any reason for
 // listening on more than tcp and upd. AFAIK, almost all applications that could
-// benefit from load balancing are tcp or udp.
+// benefit from load balancing are over tcp or udp.
 func (b *Balancer) listen(link netlink.Link) {
 	toListen, err := net.ResolveIPAddr("ip4", b.vip.String())
 	handleErr(err)
@@ -87,13 +86,13 @@ func (b *Balancer) handlePacket(pool *sync.Pool) {
 			log.Println(err)
 			continue
 		}
-		backend, err := b.backends.Get(hostPort)
+		backend, err := b.backendMap.Get(hostPort)
 		if err != nil {
 			log.Println("Packet received with no backends. Packet dropped.")
 			continue
 		}
-		fmt.Println(backend)
-		fmt.Println(hostPort)
+		backend.Writer.SendData(clippedLoad)
+		pool.Put(raw.payload)
 	}
 }
 
