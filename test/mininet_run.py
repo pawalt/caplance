@@ -20,7 +20,7 @@ from mininet.cli import CLI
 
 def run_tests(cli):
     "Create and test a simple network"
-    topo = SingleSwitchTopo(k=2)
+    topo = SingleSwitchTopo(k=3)
     private_dirs = ['/run', ('/var/run', '/tmp/%(name)s/var/run'), '/var/mn']
     host = partial(Host, privateDirs=private_dirs)
     net = Mininet(topo=topo, host=host, controller=OVSController)
