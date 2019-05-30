@@ -13,7 +13,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new Handler
-func NewHandler(capacity int64) (*Handler, error) {
+func NewHandler(capacity int) (*Handler, error) {
 	mag, err := maglev.NewMaglev([]string{}, uint64(capacity))
 	if err != nil {
 		return nil, err

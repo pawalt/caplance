@@ -11,7 +11,7 @@ type PacketForwarder interface {
 // Backend is the data struct for a single backend
 type Backend struct {
 	name   string          // name of backend
-	ip     net.IP          // ip for the backend to connect to
+	ip     net.IP          // ip for the balancer to send data to
 	Writer PacketForwarder // interface for sending to backend
 }
 

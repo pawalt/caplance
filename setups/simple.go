@@ -12,10 +12,11 @@ func setupSimple() {
 	if err != nil {
 		panic(err)
 	}
-	err = b.Add("b1", net.ParseIP("10.0.0.2"))
+	// Add not currently supported
+	/*err = b.Add("b1", net.ParseIP("10.0.0.2"))
 	if err != nil {
 		panic(err)
-	}
+	}*/
 	b.Start()
 }
 

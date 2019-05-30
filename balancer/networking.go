@@ -86,7 +86,7 @@ func (b *Balancer) handlePacket(pool *sync.Pool) {
 			log.Println(err)
 			continue
 		}
-		backend, err := b.backendMap.Get(hostPort)
+		backend, err := b.backendManager.Get(hostPort)
 		if err != nil {
 			log.Println("Packet received with no backends. Packet dropped.")
 			continue
