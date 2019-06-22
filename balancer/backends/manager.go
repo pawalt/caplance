@@ -6,21 +6,29 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/pwpon500/caplance/util"
 )
 
 const (
 	REGISTER_TIMEOUT = 10
-	READ_TIMEOUT     = 20
+	READ_TIMEOUT     = 30
 	WRITE_TIMEOUT    = 5
 )
 
+type managedBackend struct {
+	name   string
+	dataIP net.IP
+	comm   util.Communicator
+}
+
 // Manager contains the info needed to manage the backends
 type Manager struct {
-	listener      net.Listener                   // listener for new backends
-	listenIP      net.IP                         // ip to listen on
-	listenPort    int                            // port to listen on
-	handler       *Handler                       // handler for backends
-	communicators map[string]BackendCommunicator // map of backend name to its communicator
+	listener        net.Listener               // listener for new backends
+	listenIP        net.IP                     // ip to listen on
+	listenPort      int                        // port to listen on
+	handler         *Handler                   // handler for backends
+	managedBackends map[string]*managedBackend // map of backend name to its communicator
 }
 
 // NewManager instantiates a new instance of the Manager object
@@ -32,10 +40,10 @@ func NewManager(ip net.IP, port, capacity int) (*Manager, error) {
 	}
 
 	return &Manager{
-		listenIP:      ip,
-		listenPort:    port,
-		handler:       handler,
-		communicators: make(map[string]BackendCommunicator)}, nil
+		listenIP:        ip,
+		listenPort:      port,
+		handler:         handler,
+		managedBackends: make(map[string]*managedBackend)}, nil
 }
 
 // Listen listens for new connections, registering them if needed
@@ -68,7 +76,7 @@ func (m *Manager) GetBackends() []*Backend {
 // registration message should be in the following format:
 // REGISTER <desired_name> <ip>
 func (m *Manager) attemptRegister(conn net.Conn) {
-	comm := NewTCPCommunicator(conn, READ_TIMEOUT, WRITE_TIMEOUT)
+	comm := util.NewTCPCommunicator(conn, READ_TIMEOUT, WRITE_TIMEOUT)
 
 	response, err := comm.ReadLine()
 	if err != nil {
@@ -107,7 +115,76 @@ func (m *Manager) attemptRegister(conn net.Conn) {
 	}
 
 	comm.WriteLine("REGISTERED " + cleanedName + " " + ip.String())
-	m.communicators[cleanedName] = comm
+	back := &managedBackend{
+		name:   cleanedName,
+		dataIP: ip,
+		comm:   comm,
+	}
 
-	// now do your listening thing
+	m.managedBackends[cleanedName] = back
+
+	m.monitor(cleanedName)
+}
+
+func (m *Manager) monitor(name string) {
+	back := m.managedBackends[name]
+	comm := back.comm
+	for {
+		message, err := comm.ReadLine()
+		if err != nil {
+			if errChk, ok := err.(net.Error); ok && errChk.Timeout() {
+				log.Println(err)
+				m.deregisterClient(name, "health check timeout ran out")
+			} else {
+				log.Println(err)
+				m.deregisterClient(name, "error reading from tcp connection: "+err.Error())
+			}
+			return
+		}
+
+		tokens := strings.Split(message, " ")
+		if len(tokens) < 1 {
+			comm.WriteLine("INVALID empty message")
+			continue
+		}
+
+		switch tokens[0] {
+		case "DEREGISTER":
+			m.deregisterClient(name, "client requested deregistration")
+			return
+
+		case "PAUSE":
+			err := m.handler.Remove(name)
+			if err != nil {
+				comm.WriteLine("INVALID backend already paused")
+			} else {
+				comm.WriteLine("PAUSED " + name)
+			}
+
+		case "RESUME":
+			err := m.handler.Add(name, back.dataIP)
+			if err != nil {
+				comm.WriteLine("INVALID backend already active")
+			} else {
+				comm.WriteLine("RESUMED " + name)
+			}
+
+		case "HEALTH":
+			if len(tokens) < 2 {
+				comm.WriteLine("INVALID no status code in health check")
+			} else {
+				comm.WriteLine("HEALTHACK 200")
+			}
+
+		default:
+			comm.WriteLine("INVALID first token of message (" + tokens[0] + ") is not an option")
+		}
+	}
+}
+
+func (m *Manager) deregisterClient(name, reason string) {
+	m.handler.Remove(name)
+	comm := m.managedBackends[name].comm
+	comm.WriteLine("DEREGISTERED " + name + " " + reason)
+	comm.Close()
 }

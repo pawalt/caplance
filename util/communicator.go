@@ -1,13 +1,14 @@
-package backends
+package util
 
 import (
 	"bufio"
 	"net"
+	"strings"
 	"time"
 )
 
-// BackendCommunicator is the connection manager for a backend
-type BackendCommunicator interface {
+// Communicator is the connection manager for a backend
+type Communicator interface {
 	ReadLine() (string, error)
 	WriteLine(data string) error
 	Close() error
@@ -37,7 +38,11 @@ func NewTCPCommunicator(conn net.Conn, readInt, writeInt int) *TCPCommunicator {
 // ReadLine reads a line from the connection with the applied timeout
 func (t *TCPCommunicator) ReadLine() (string, error) {
 	t.conn.SetReadDeadline(time.Now().Add(t.readTimeout))
-	return t.reader.ReadString('\n')
+	resp, err := t.reader.ReadString('\n')
+	if err != nil {
+		return resp, err
+	}
+	return strings.Trim(resp, "\n\r"), err
 }
 
 // WriteLine writes to the connection with the applied timeout

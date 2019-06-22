@@ -123,6 +123,20 @@ func genTunIPNet(ip net.IP) *net.IPNet {
 }
 
 func attachVIP(vip net.IP) (string, error) {
+	foundDevice, err := findDevice(vip)
+	if err != nil {
+		return "", err
+	}
+	dev, err := netlink.LinkByName(foundDevice)
+	if err != nil {
+		return "", err
+	}
+	vipNet := &net.IPNet{IP: vip, Mask: net.CIDRMask(32, 32)}
+	netlink.AddrAdd(dev, &netlink.Addr{IPNet: vipNet})
+	return foundDevice, nil
+}
+
+func findDevice(ip net.IP) (string, error) {
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
 		return "", err
@@ -131,7 +145,7 @@ func attachVIP(vip net.IP) (string, error) {
 	for _, device := range devices {
 		for _, address := range device.Addresses {
 			ipNet := &net.IPNet{IP: address.IP, Mask: address.Netmask}
-			if ipNet.Contains(vip) {
+			if ipNet.Contains(ip) {
 				if foundDevice == "" {
 					foundDevice = device.Name
 				} else if foundDevice != device.Name {
@@ -143,12 +157,6 @@ func attachVIP(vip net.IP) (string, error) {
 	if foundDevice == "" {
 		return "", errors.New("no device on same subnet as VIP. VIP cannot be assigned")
 	}
-	dev, err := netlink.LinkByName(foundDevice)
-	if err != nil {
-		return "", err
-	}
-	vipNet := &net.IPNet{IP: vip, Mask: net.CIDRMask(32, 32)}
-	netlink.AddrAdd(dev, &netlink.Addr{IPNet: vipNet})
 	return foundDevice, nil
 }
 
