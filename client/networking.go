@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/gopacket/pcap"
@@ -40,10 +41,13 @@ func findDevice(ip net.IP) (string, error) {
 	return foundDevice, nil
 }
 
-func initBufPool(size int) *sync.Pool {
+func initPacketPool(size int) *sync.Pool {
 	return &sync.Pool{
 		New: func() interface{} {
-			return make([]byte, size)
+			return &rawPacket{
+				size:    0,
+				payload: make([]byte, size),
+			}
 		},
 	}
 }
@@ -91,6 +95,7 @@ func (c *Client) manageBalancerConnection() {
 
 func (c *Client) sendHealth() {
 	for c.state == Active || c.state == Paused {
+		log.Println("sending health")
 		c.comm.WriteLine("HEALTH 200")
 		time.Sleep(HEALTH_RATE * time.Second)
 	}
@@ -113,16 +118,60 @@ func (c *Client) listen() error {
 	}
 
 	mtu := link.Attrs().MTU
-	pool := initBufPool(mtu)
+	pool := initPacketPool(mtu)
+
+	for i := 0; i < 20; i++ {
+		go c.handlePackets(pool)
+	}
 
 	c.state = Active
-	for {
-		buf := pool.Get().([]byte)
-		n, _, err := c.dataListener.ReadFrom(buf)
+	for c.state == Active || c.state == Paused {
+		packet := pool.Get().(*rawPacket)
+		n, _, err := c.dataListener.ReadFrom(packet.payload)
 		if err != nil {
 			return err
 		}
-		log.Println(string(buf[:n]))
+		packet.size = n
+		c.packets <- packet
+	}
+
+	return nil
+}
+
+func (c *Client) attachVIP() error {
+	lo, err := netlink.LinkByName("lo")
+	if err != nil {
+		return err
+	}
+	vipNet := &net.IPNet{IP: c.vip, Mask: net.CIDRMask(32, 32)}
+	netlink.AddrAdd(lo, &netlink.Addr{IPNet: vipNet})
+	return nil
+}
+
+func (c *Client) handlePackets(pool *sync.Pool) {
+	fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
+
+	if c.vip.To4() == nil {
+		log.Panicln("vip is not ipv4")
+	}
+
+	var vipFour [4]byte
+	copy(vipFour[:], c.vip[:4])
+
+	addr := syscall.SockaddrInet4{
+		Port: 0,
+		Addr: vipFour,
+	}
+
+	for c.state == Active || c.state == Paused {
+		packet := <-c.packets
+
+		err := syscall.Sendto(fd, packet.payload[:packet.size], 0, &addr)
+		if err != nil {
+			log.Println("Failed to write packet to local vip")
+		}
+
+		pool.Put(packet)
 	}
 }
 

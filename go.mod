@@ -1,6 +1,9 @@
 module github.com/pwpon500/caplance
 
 require (
+	github.com/AkihiroSuda/go-netfilter-queue v0.0.0-20180724014230-5b02f804b4f2
+	github.com/chifflier/nfqueue-go v0.0.0-20170228160439-61ca646babef
+	github.com/coreos/go-iptables v0.4.1
 	github.com/dchest/siphash v1.2.1 // indirect
 	github.com/google/go-cmp v0.3.0 // indirect
 	github.com/google/gopacket v1.1.17

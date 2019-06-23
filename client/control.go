@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/pwpon500/caplance/util"
 )
@@ -38,14 +39,21 @@ type Client struct {
 	comm         util.Communicator
 	dataListener net.PacketConn
 	name         string
+	packets      chan *rawPacket
+}
+
+type rawPacket struct {
+	payload []byte
+	size    int
 }
 
 // NewClient creates a new Client object
 func NewClient(vip, dataIP net.IP) *Client {
 	return &Client{
-		dataIP: dataIP,
-		vip:    vip,
-		state:  Unregistered}
+		dataIP:  dataIP,
+		vip:     vip,
+		state:   Unregistered,
+		packets: make(chan *rawPacket)}
 }
 
 // Start attempts to register and listen for connections
@@ -74,5 +82,15 @@ func (c *Client) Start(connectIP net.IP) error {
 
 	c.state = Paused
 
-	return c.listen()
+	err = c.attachVIP()
+	if err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go c.manageBalancerConnection()
+	go c.listen()
+	wg.Wait()
+	return nil
 }

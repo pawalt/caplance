@@ -2,33 +2,29 @@ package balancer
 
 import (
 	"errors"
-	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 
+	"github.com/AkihiroSuda/go-netfilter-queue"
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/pwpon500/caplance/balancer/backends"
 	"github.com/vishvananda/netlink"
 )
 
 // Balancer is the main data struct for the load balancer
 type Balancer struct {
-	backendManager *backends.Manager // manager for backends
-	vip            net.IP            // VIP the balancer is operating off of
-	connectIP      net.IP            // IP for the RPC between backends and balancer
-	packets        chan rawPacket    // channel of queued up packets
-	stopChan       chan os.Signal    // channel to listen for graceful stop
-	listener       *net.IPConn       // vip listener
-	testFlag       bool              // flag to check if we're in test mode
-	mux            sync.Mutex        // lock to ensure we don't start and stop at the same time
-	ipHeaders      [][]byte          // prebuilt ip headers to append onto encapsulated packets
-}
-
-type rawPacket struct {
-	payload []byte
-	size    int
+	backendManager *backends.Manager  // manager for backends
+	vip            net.IP             // VIP the balancer is operating off of
+	connectIP      net.IP             // IP for the RPC between backends and balancer
+	packets        chan []byte        // channel of queued up packets
+	stopChan       chan os.Signal     // channel to listen for graceful stop
+	testFlag       bool               // flag to check if we're in test mode
+	mux            sync.Mutex         // lock to ensure we don't start and stop at the same time
+	nfq            *netfilter.NFQueue // queue to grab packets from the iptables nfqueue
 }
 
 // New creates new Balancer. Throws error if capacity is not prime
@@ -42,7 +38,7 @@ func New(startVIP, toConnect net.IP, capacity int) (*Balancer, error) {
 		backendManager: manager,
 		vip:            startVIP,
 		connectIP:      toConnect,
-		packets:        make(chan rawPacket),
+		packets:        make(chan []byte),
 		stopChan:       make(chan os.Signal),
 		testFlag:       false}, nil
 }
@@ -79,6 +75,7 @@ func (b *Balancer) Start() error {
 	if err != nil {
 		return err
 	}
+
 	signal.Notify(b.stopChan, syscall.SIGTERM)
 	signal.Notify(b.stopChan, syscall.SIGINT)
 	go func() {
@@ -86,9 +83,10 @@ func (b *Balancer) Start() error {
 		defer func() {
 			b.mux.Lock()
 
-			if b.listener != nil {
-				b.listener.Close()
+			if b.nfq != nil {
+				b.nfq.Close()
 			}
+
 			allBackends := b.backendManager.GetBackends()
 			for _, back := range allBackends {
 				back.Writer.Close()
@@ -97,7 +95,15 @@ func (b *Balancer) Start() error {
 			vipNet := &net.IPNet{IP: b.vip, Mask: net.CIDRMask(32, 32)}
 			netlink.AddrDel(link, &netlink.Addr{IPNet: vipNet})
 
+			ipt, err := iptables.New()
+			if err != nil {
+				log.Println(err)
+			}
+			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "tcp")
+			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "udp")
+
 			if graceful && !b.testFlag {
+				log.Println("Exiting")
 				os.Exit(0)
 			}
 
@@ -105,20 +111,21 @@ func (b *Balancer) Start() error {
 		}()
 		sig := <-b.stopChan
 		graceful = true
-		fmt.Printf("caught sig: %+v \n", sig)
+		log.Printf("caught sig: %+v \n", sig)
 	}()
+
 	b.mux.Unlock()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go b.backendManager.Listen()
-	go b.listen(link)
+	go b.listen()
 	wg.Wait()
 	return nil
 }
 
 // Stop stops the currently running lb by appending onto `stop`
 func (b *Balancer) Stop() error {
-	if b.listener == nil {
+	if b.nfq == nil {
 		return errors.New("unstarted balancer cannot be stopped")
 	}
 

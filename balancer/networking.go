@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AkihiroSuda/go-netfilter-queue"
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -37,49 +39,44 @@ func initBufPool(size int) *sync.Pool {
 
 // I could be convinced to listen on more than tcp and udp, but it would have
 // to be a very convincing argument. As it sits, I don't see any reason for
-// listening on more than tcp and upd. AFAIK, almost all applications that could
+// listening on more than tcp and udp. AFAIK, almost all applications that could
 // benefit from load balancing are over tcp or udp.
-func (b *Balancer) listen(link netlink.Link) {
-	toListen, err := net.ResolveIPAddr("ip4", b.vip.String())
-	handleErr(err)
-	tcpConn, err := net.ListenIP("ip4:tcp", toListen)
-	handleErr(err)
-	udpConn, err := net.ListenIP("ip4:udp", toListen)
-	handleErr(err)
-
-	mtu := link.Attrs().MTU
-
-	pool := initBufPool(mtu)
+func (b *Balancer) listen() error {
+	ipt, err := iptables.New()
+	if err != nil {
+		log.Panicln(err)
+	}
+	err = ipt.Insert("filter", "INPUT", 1, "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "tcp")
+	if err != nil {
+		log.Panicln(err)
+	}
+	err = ipt.Insert("filter", "INPUT", 1, "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "udp")
+	if err != nil {
+		log.Panicln(err)
+	}
 
 	for i := 0; i < 20; i++ {
-		go b.handlePacket(pool)
+		go b.handlePacket()
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go b.listenWithConn(tcpConn, pool)
-	go b.listenWithConn(udpConn, pool)
-	wg.Wait()
-}
-
-func (b *Balancer) listenWithConn(conn *net.IPConn, pool *sync.Pool) {
+	b.nfq, err = netfilter.NewNFQueue(0, 100, netfilter.NF_DEFAULT_PACKET_SIZE)
+	if err != nil {
+		log.Panicln(err)
+	}
+	packetChan := b.nfq.GetPackets()
 	for {
-		buf := pool.Get().([]byte)
-		n, err := conn.Read(buf)
-		if err != nil {
-			log.Println("could not read from connection")
-			continue
+		select {
+		case packet := <-packetChan:
+			b.packets <- packet.Packet.Data()
+			packet.SetVerdict(netfilter.NF_DROP)
 		}
-		toSend := rawPacket{buf, n}
-		b.packets <- toSend
 	}
 }
 
-func (b *Balancer) handlePacket(pool *sync.Pool) {
+func (b *Balancer) handlePacket() {
 	for {
-		raw := <-b.packets
-		clippedLoad := raw.payload[:raw.size]
-		packet := gopacket.NewPacket(clippedLoad, layers.LayerTypeIPv4, gopacket.Lazy)
+		payload := <-b.packets
+		packet := gopacket.NewPacket(payload, layers.LayerTypeIPv4, gopacket.Lazy)
 
 		hostPort, err := getPacketDetails(packet)
 		if err != nil {
@@ -91,8 +88,7 @@ func (b *Balancer) handlePacket(pool *sync.Pool) {
 			log.Println("Packet received with no backends. Packet dropped.")
 			continue
 		}
-		backend.Writer.SendData(clippedLoad)
-		pool.Put(raw.payload)
+		backend.Writer.SendData(payload)
 	}
 }
 
