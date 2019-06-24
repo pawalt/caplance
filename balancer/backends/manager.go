@@ -2,6 +2,7 @@ package backends
 
 import (
 	"log"
+	"math/rand"
 	"net"
 	"regexp"
 	"strconv"
@@ -114,6 +115,27 @@ func (m *Manager) attemptRegister(conn net.Conn) {
 		return
 	}
 
+	randString := randomString(16)
+	backHandle, _ := m.handler.Get(cleanedName)
+	backHandle.Writer.SendData([]byte("SANITY " + randString))
+
+	sanityResponse, err := comm.ReadLine()
+	if err != nil {
+		comm.WriteLine("INVALID error while trying to read sanity check")
+		conn.Close()
+		m.handler.Remove(cleanedName)
+		log.Println("Error while trying to sanity check: " + err.Error())
+	}
+
+	sanityTokens := strings.Split(sanityResponse, " ")
+	if len(sanityTokens) < 2 || sanityTokens[0] != "SANE" || sanityTokens[1] != randString {
+		comm.WriteLine("INVALID bad sanity check url")
+		conn.Close()
+		m.handler.Remove(cleanedName)
+		log.Println("Client udp sanity check failed")
+		return
+	}
+
 	comm.WriteLine("REGISTERED " + cleanedName + " " + ip.String())
 	back := &managedBackend{
 		name:   cleanedName,
@@ -180,6 +202,15 @@ func (m *Manager) monitor(name string) {
 			comm.WriteLine("INVALID first token of message (" + tokens[0] + ") is not an option")
 		}
 	}
+}
+
+func randomString(len int) string {
+	bytes := make([]byte, len)
+	for i := 0; i < len; i++ {
+		bytes[i] = byte(65 + rand.Intn(25)) //A=65 and Z = 65+25
+
+	}
+	return string(bytes)
 }
 
 func (m *Manager) deregisterClient(name, reason string) {

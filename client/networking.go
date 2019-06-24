@@ -106,22 +106,12 @@ func (c *Client) sendHealth() {
 
 func (c *Client) listen(wg *sync.WaitGroup) error {
 	defer wg.Done()
-	var err error
-	c.dataListener, err = net.ListenPacket("udp", c.dataIP.String()+":1337")
+
+	mtu, err := c.getMTU()
 	if err != nil {
 		return err
 	}
 
-	devName, err := findDevice(c.dataIP)
-	if err != nil {
-		return err
-	}
-	link, err := netlink.LinkByName(devName)
-	if err != nil {
-		return err
-	}
-
-	mtu := link.Attrs().MTU
 	pool := initPacketPool(mtu)
 
 	for i := 0; i < 20; i++ {
@@ -140,6 +130,19 @@ func (c *Client) listen(wg *sync.WaitGroup) error {
 	}
 
 	return nil
+}
+
+func (c *Client) getMTU() (int, error) {
+	devName, err := findDevice(c.dataIP)
+	if err != nil {
+		return 0, err
+	}
+	link, err := netlink.LinkByName(devName)
+	if err != nil {
+		return 0, err
+	}
+
+	return link.Attrs().MTU, nil
 }
 
 func (c *Client) attachVIP() error {

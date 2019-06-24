@@ -6,9 +6,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/pwpon500/caplance/util"
 )
@@ -72,18 +74,60 @@ func (c *Client) Start(connectIP net.IP) error {
 	}
 	c.comm = util.NewTCPCommunicator(conn, READ_TIMEOUT, WRITE_TIMEOUT)
 
+	ender := func() { c.comm.Close() }
+
 	err = c.comm.WriteLine("REGISTER " + c.name + " " + c.dataIP.String())
 	if err != nil {
+		ender()
 		return err
 	}
 
+	c.dataListener, err = net.ListenPacket("udp", c.dataIP.String()+":1337")
+	if err != nil {
+		ender()
+		return err
+	}
+
+	ender = func() {
+		c.comm.Close()
+		c.dataListener.Close()
+	}
+
+	mtu, err := c.getMTU()
+	if err != nil {
+		ender()
+		return err
+	}
+
+	sanityString := ""
+	buf := make([]byte, mtu)
+	sanityFailTime := time.Now().Add(READ_TIMEOUT * time.Second)
+	for !strings.HasPrefix(sanityString, "SANITY") && !time.Now().After(sanityFailTime) {
+		n, _, err := c.dataListener.ReadFrom(buf)
+		if err != nil {
+			ender()
+			return err
+		}
+		sanityString = string(buf[:n])
+	}
+
+	sanitySplit := strings.Split(sanityString, " ")
+	if sanitySplit[0] != "SANITY" || len(sanitySplit) < 2 {
+		ender()
+		return errors.New("failed to complete sanity check in " + strconv.Itoa(READ_TIMEOUT) + " seconds.")
+	}
+
+	c.comm.WriteLine("SANE " + sanitySplit[1])
+
 	resp, err := c.comm.ReadLine()
 	if err != nil {
+		ender()
 		return err
 	}
 
 	tokens := strings.Split(resp, " ")
 	if tokens[0] != "REGISTERED" {
+		ender()
 		return errors.New(resp)
 	}
 
@@ -91,6 +135,7 @@ func (c *Client) Start(connectIP net.IP) error {
 
 	err = c.attachVIP()
 	if err != nil {
+		ender()
 		return err
 	}
 
