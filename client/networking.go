@@ -52,8 +52,10 @@ func initPacketPool(size int) *sync.Pool {
 	}
 }
 
-func (c *Client) manageBalancerConnection() {
+func (c *Client) manageBalancerConnection(wg *sync.WaitGroup) {
+	defer wg.Done()
 	go c.sendHealth()
+	defer log.Println("ended manage balancer")
 	for c.state == Active || c.state == Paused {
 		message, err := c.comm.ReadLine()
 		if err != nil {
@@ -91,6 +93,7 @@ func (c *Client) manageBalancerConnection() {
 			log.Println("Message received from server not matching spec: " + message)
 		}
 	}
+
 }
 
 func (c *Client) sendHealth() {
@@ -101,7 +104,8 @@ func (c *Client) sendHealth() {
 	}
 }
 
-func (c *Client) listen() error {
+func (c *Client) listen(wg *sync.WaitGroup) error {
+	defer wg.Done()
 	var err error
 	c.dataListener, err = net.ListenPacket("udp", c.dataIP.String()+":1337")
 	if err != nil {
@@ -148,6 +152,16 @@ func (c *Client) attachVIP() error {
 	return nil
 }
 
+func (c *Client) detachVIP() error {
+	lo, err := netlink.LinkByName("lo")
+	if err != nil {
+		return err
+	}
+	vipNet := &net.IPNet{IP: c.vip, Mask: net.CIDRMask(32, 32)}
+	netlink.AddrDel(lo, &netlink.Addr{IPNet: vipNet})
+	return nil
+}
+
 func (c *Client) handlePackets(pool *sync.Pool) {
 	fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
 
@@ -165,7 +179,6 @@ func (c *Client) handlePackets(pool *sync.Pool) {
 
 	for c.state == Active || c.state == Paused {
 		packet := <-c.packets
-
 		err := syscall.Sendto(fd, packet.payload[:packet.size], 0, &addr)
 		if err != nil {
 			log.Println("Failed to write packet to local vip")
@@ -186,4 +199,5 @@ func (c *Client) gracefulStop() {
 	}
 	c.comm.Close()
 	c.dataListener.Close()
+	c.detachVIP()
 }

@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/coreos/go-iptables/iptables"
@@ -38,8 +39,8 @@ func New(startVIP, toConnect net.IP, capacity int) (*Balancer, error) {
 		backendManager: manager,
 		vip:            startVIP,
 		connectIP:      toConnect,
-		packets:        make(chan []byte),
-		stopChan:       make(chan os.Signal),
+		packets:        make(chan []byte, 100),
+		stopChan:       make(chan os.Signal, 5),
 		testFlag:       false}, nil
 }
 
@@ -83,18 +84,23 @@ func (b *Balancer) Start() error {
 		defer func() {
 			b.mux.Lock()
 
+			log.Println(1)
 			if b.nfq != nil {
-				b.nfq.Close()
+				go b.nfq.Close()                   // need to multithread because sometimes b.nfq.Close() blocks indefinitely
+				time.Sleep(500 * time.Millisecond) // give nfq some time to close
 			}
 
+			log.Println(2)
 			allBackends := b.backendManager.GetBackends()
 			for _, back := range allBackends {
 				back.Writer.Close()
 			}
 
+			log.Println(3)
 			vipNet := &net.IPNet{IP: b.vip, Mask: net.CIDRMask(32, 32)}
 			netlink.AddrDel(link, &netlink.Addr{IPNet: vipNet})
 
+			log.Println(4)
 			ipt, err := iptables.New()
 			if err != nil {
 				log.Println(err)
@@ -102,6 +108,7 @@ func (b *Balancer) Start() error {
 			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "tcp")
 			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "udp")
 
+			log.Println(5)
 			if graceful && !b.testFlag {
 				log.Println("Exiting")
 				os.Exit(0)
@@ -112,6 +119,7 @@ func (b *Balancer) Start() error {
 		sig := <-b.stopChan
 		graceful = true
 		log.Printf("caught sig: %+v \n", sig)
+		b.stopChan <- sig
 	}()
 
 	b.mux.Unlock()

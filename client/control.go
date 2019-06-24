@@ -2,9 +2,13 @@ package client
 
 import (
 	"errors"
+	"log"
 	"net"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/pwpon500/caplance/util"
 )
@@ -33,15 +37,17 @@ const (
 
 // Client holds the current state and configuration for a backend
 type Client struct {
-	dataIP       net.IP
-	vip          net.IP
-	state        HealthState
-	comm         util.Communicator
-	dataListener net.PacketConn
-	name         string
-	packets      chan *rawPacket
+	dataIP       net.IP            // ip for the lb to forward packets to
+	vip          net.IP            // vip for the cluster
+	state        HealthState       // state of backend as described by the above consts
+	comm         util.Communicator // communicator between backend and lb
+	dataListener net.PacketConn    // listener for packets forwarded from lb
+	name         string            // name of backend
+	packets      chan *rawPacket   // channel of packets to process
+	stopChan     chan os.Signal    // channel to capture SIGTERM and SIGINT for graceful stop
 }
 
+// struct to hold an individual data packet recieved from lb
 type rawPacket struct {
 	payload []byte
 	size    int
@@ -50,10 +56,11 @@ type rawPacket struct {
 // NewClient creates a new Client object
 func NewClient(vip, dataIP net.IP) *Client {
 	return &Client{
-		dataIP:  dataIP,
-		vip:     vip,
-		state:   Unregistered,
-		packets: make(chan *rawPacket)}
+		dataIP:   dataIP,
+		vip:      vip,
+		state:    Unregistered,
+		packets:  make(chan *rawPacket, 100),
+		stopChan: make(chan os.Signal, 5)}
 }
 
 // Start attempts to register and listen for connections
@@ -87,10 +94,19 @@ func (c *Client) Start(connectIP net.IP) error {
 		return err
 	}
 
+	signal.Notify(c.stopChan, syscall.SIGTERM)
+	signal.Notify(c.stopChan, syscall.SIGINT)
+	go func() {
+		defer c.gracefulStop()
+		sig := <-c.stopChan
+		log.Printf("caught sig: %+v \n", sig)
+		c.stopChan <- sig
+	}()
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go c.manageBalancerConnection()
-	go c.listen()
+	go c.manageBalancerConnection(&wg)
+	go c.listen(&wg)
 	wg.Wait()
 	return nil
 }

@@ -42,6 +42,7 @@ func initBufPool(size int) *sync.Pool {
 // listening on more than tcp and udp. AFAIK, almost all applications that could
 // benefit from load balancing are over tcp or udp.
 func (b *Balancer) listen() error {
+	defer log.Println("stopped data listening")
 	ipt, err := iptables.New()
 	if err != nil {
 		log.Panicln(err)
@@ -64,13 +65,18 @@ func (b *Balancer) listen() error {
 		log.Panicln(err)
 	}
 	packetChan := b.nfq.GetPackets()
-	for {
+	stopped := false
+	for !stopped {
 		select {
 		case packet := <-packetChan:
 			b.packets <- packet.Packet.Data()
 			packet.SetVerdict(netfilter.NF_DROP)
+		case sig := <-b.stopChan:
+			b.stopChan <- sig
+			stopped = true
 		}
 	}
+	return nil
 }
 
 func (b *Balancer) handlePacket() {
