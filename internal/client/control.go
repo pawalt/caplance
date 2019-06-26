@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pwpon500/caplance/util"
+	"github.com/pwpon500/caplance/pkg/util"
 )
 
 // HealthState represents the current state of the client

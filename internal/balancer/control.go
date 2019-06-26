@@ -12,7 +12,7 @@ import (
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/pwpon500/caplance/balancer/backends"
+	"github.com/pwpon500/caplance/internal/balancer/backends"
 	"github.com/vishvananda/netlink"
 )
 

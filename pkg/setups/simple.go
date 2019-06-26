@@ -3,7 +3,7 @@ package setups
 import (
 	"net"
 
-	"github.com/pwpon500/caplance/balancer"
+	"github.com/pwpon500/caplance/internal/balancer"
 )
 
 func setupSimple() {

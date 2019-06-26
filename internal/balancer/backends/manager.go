@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pwpon500/caplance/util"
+	"github.com/pwpon500/caplance/pkg/util"
 )
 
 const (

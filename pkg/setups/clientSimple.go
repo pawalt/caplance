@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 
-	"github.com/pwpon500/caplance/client"
+	"github.com/pwpon500/caplance/internal/client"
 )
 
 func setupClientSimple() {
