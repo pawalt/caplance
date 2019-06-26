@@ -204,3 +204,17 @@ func (c *Client) gracefulStop() {
 	c.dataListener.Close()
 	c.detachVIP()
 }
+
+func (c *Client) pause() error {
+	if c.state == Paused {
+		return errors.New("cannot pause an already paused client")
+	}
+	return c.comm.WriteLine("PAUSE " + c.name)
+}
+
+func (c *Client) resume() error {
+	if c.state == Active {
+		return errors.New("cannot resume an already active client")
+	}
+	return c.comm.WriteLine("RESUME " + c.name)
+}

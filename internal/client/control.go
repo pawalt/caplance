@@ -22,6 +22,7 @@ const (
 	REGISTER_TIMEOUT = 10
 	READ_TIMEOUT     = 20
 	WRITE_TIMEOUT    = 5
+	SOCKADDR         = "/var/sock/caplance.sock"
 )
 
 const (
@@ -47,6 +48,7 @@ type Client struct {
 	name         string            // name of backend
 	packets      chan *rawPacket   // channel of packets to process
 	stopChan     chan os.Signal    // channel to capture SIGTERM and SIGINT for graceful stop
+	unixSock     net.Listener      // unix sock for communicating with caplancectl
 }
 
 // struct to hold an individual data packet recieved from lb
@@ -154,4 +156,20 @@ func (c *Client) Start(connectIP net.IP) error {
 	go c.listen(&wg)
 	wg.Wait()
 	return nil
+}
+
+func stateToString(health HealthState) string {
+	switch health {
+	case Unregistered:
+		return "Unregistered"
+	case Registering:
+		return "Registering"
+	case Active:
+		return "Active"
+	case Paused:
+		return "Paused"
+	case Deregistering:
+		return "Deregistering"
+	}
+	return "State not found"
 }
