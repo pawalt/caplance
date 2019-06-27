@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/gopacket/pcap"
-	"github.com/pwpon500/caplance/balancer"
+	"github.com/pwpon500/caplance/internal/balancer"
 )
 
 func TestBalancerCreation(t *testing.T) {
