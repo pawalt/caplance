@@ -151,9 +151,10 @@ func (c *Client) Start(connectIP net.IP) error {
 	}()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go c.manageBalancerConnection(&wg)
 	go c.listen(&wg)
+	go c.listenUnix()
 	wg.Wait()
 	return nil
 }

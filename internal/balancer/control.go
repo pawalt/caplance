@@ -84,23 +84,19 @@ func (b *Balancer) Start() error {
 		defer func() {
 			b.mux.Lock()
 
-			log.Println(1)
 			if b.nfq != nil {
 				go b.nfq.Close()                   // need to multithread because sometimes b.nfq.Close() blocks indefinitely
 				time.Sleep(500 * time.Millisecond) // give nfq some time to close
 			}
 
-			log.Println(2)
 			allBackends := b.backendManager.GetBackends()
 			for _, back := range allBackends {
 				back.Writer.Close()
 			}
 
-			log.Println(3)
 			vipNet := &net.IPNet{IP: b.vip, Mask: net.CIDRMask(32, 32)}
 			netlink.AddrDel(link, &netlink.Addr{IPNet: vipNet})
 
-			log.Println(4)
 			ipt, err := iptables.New()
 			if err != nil {
 				log.Println(err)
@@ -108,7 +104,6 @@ func (b *Balancer) Start() error {
 			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "tcp")
 			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "udp")
 
-			log.Println(5)
 			if graceful && !b.testFlag {
 				log.Println("Exiting")
 				os.Exit(0)

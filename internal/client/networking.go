@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -203,6 +204,10 @@ func (c *Client) gracefulStop() {
 	c.comm.Close()
 	c.dataListener.Close()
 	c.detachVIP()
+	if r := recover(); r != nil {
+		log.Println(r)
+	}
+	os.Exit(0)
 }
 
 func (c *Client) pause() error {

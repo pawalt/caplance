@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"time"
 )
 
 func (c *Client) listenUnix() {
-	if _, err := os.Stat(SOCKADDR); err != nil {
-		log.Panicln("could not open " + SOCKADDR + ". Error: " + err.Error())
+	if err := os.RemoveAll(SOCKADDR); err != nil {
+		log.Fatal(err)
 	}
 
 	var err error
@@ -26,8 +27,11 @@ func (c *Client) listenUnix() {
 
 // Deregister command from caplancectl
 func (c *Client) Deregister(req *string, reply *string) error {
+	go func() {
+		time.Sleep(1000 * time.Millisecond)
+		c.gracefulStop()
+	}()
 	*reply = "Deregistering and stopping..."
-	c.gracefulStop()
 	return nil
 }
 
