@@ -12,6 +12,7 @@ require (
 	github.com/kr/pty v1.1.4 // indirect
 	github.com/mdlayher/raw v0.0.0-20190419142535-64193704e472 // indirect
 	github.com/spf13/cobra v0.0.5
+	github.com/spf13/viper v1.3.2
 	github.com/stamblerre/gocode v0.0.0-20190327203809-810592086997 // indirect
 	github.com/vishvananda/netlink v1.0.0
 	github.com/vishvananda/netns v0.0.0-20180720170159-13995c7128cc // indirect
