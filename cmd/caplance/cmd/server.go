@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"log"
 	"net"
 	"strconv"
 
 	"github.com/pwpon500/caplance/internal/balancer"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +18,7 @@ var serverCmd = &cobra.Command{
 	Short: "Start caplance in server mode",
 	Long:  `Mark this host as the load balancer, forwarding packets to a set of backends.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		log.Infoln("Reading in config file")
 		readConfig()
 		vip := net.ParseIP(conf.VIP)
 		if vip == nil {
@@ -30,10 +31,11 @@ var serverCmd = &cobra.Command{
 		if conf.Server.BackendCapacity <= 0 {
 			log.Fatal("Backend capacity " + strconv.Itoa(conf.Server.BackendCapacity) + " must be postive.")
 		}
-		b, err := balancer.New(vip, mngIP, conf.Server.BackendCapacity)
+		b, err := balancer.New(vip, mngIP, conf.Server.BackendCapacity, conf.ReadTimeout, conf.WriteTimeout)
 		if err != nil {
 			log.Fatal("Error when creating balancer: " + err.Error())
 		}
+		log.Infoln("Starting load balancer")
 		b.Start()
 	},
 }

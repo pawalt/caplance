@@ -2,7 +2,6 @@ package balancer
 
 import (
 	"errors"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -13,6 +12,7 @@ import (
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/pwpon500/caplance/internal/balancer/backends"
+	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -26,11 +26,13 @@ type Balancer struct {
 	testFlag       bool               // flag to check if we're in test mode
 	mux            sync.Mutex         // lock to ensure we don't start and stop at the same time
 	nfq            *netfilter.NFQueue // queue to grab packets from the iptables nfqueue
+	readTimeout    int
+	writeTimeout   int
 }
 
 // New creates new Balancer. Throws error if capacity is not prime
-func New(startVIP, toConnect net.IP, capacity int) (*Balancer, error) {
-	manager, err := backends.NewManager(toConnect, 1338, capacity)
+func New(startVIP, toConnect net.IP, capacity, readTimeout, writeTimeout int) (*Balancer, error) {
+	manager, err := backends.NewManager(toConnect, 1338, capacity, readTimeout, writeTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -41,12 +43,14 @@ func New(startVIP, toConnect net.IP, capacity int) (*Balancer, error) {
 		connectIP:      toConnect,
 		packets:        make(chan []byte, 100),
 		stopChan:       make(chan os.Signal, 5),
-		testFlag:       false}, nil
+		testFlag:       false,
+		readTimeout:    readTimeout,
+		writeTimeout:   writeTimeout}, nil
 }
 
 // NewTest creates new Balancer with the testing flag on
-func NewTest(startVIP, toConnect net.IP, capacity int) (*Balancer, error) {
-	back, err := New(startVIP, toConnect, capacity)
+func NewTest(startVIP, toConnect net.IP, capacity, readTimeout, writeTimeout int) (*Balancer, error) {
+	back, err := New(startVIP, toConnect, capacity, readTimeout, writeTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -99,13 +103,13 @@ func (b *Balancer) Start() error {
 
 			ipt, err := iptables.New()
 			if err != nil {
-				log.Println(err)
+				log.Errorln(err)
 			}
 			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "tcp")
 			ipt.Delete("filter", "INPUT", "-j", "NFQUEUE", "--queue-num", "0", "-d", b.vip.String(), "-p", "udp")
 
 			if graceful && !b.testFlag {
-				log.Println("Exiting")
+				log.Infoln("Exiting")
 				os.Exit(0)
 			}
 
@@ -113,7 +117,7 @@ func (b *Balancer) Start() error {
 		}()
 		sig := <-b.stopChan
 		graceful = true
-		log.Printf("caught sig: %+v \n", sig)
+		log.Warnf("caught sig: %+v \n", sig)
 		b.stopChan <- sig
 	}()
 

@@ -2,7 +2,6 @@ package client
 
 import (
 	"errors"
-	"log"
 	"net"
 	"os"
 	"strings"
@@ -10,12 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/google/gopacket/pcap"
 	"github.com/vishvananda/netlink"
-)
-
-const (
-	HEALTH_RATE = 10
 )
 
 func findDevice(ip net.IP) (string, error) {
@@ -56,24 +53,24 @@ func initPacketPool(size int) *sync.Pool {
 func (c *Client) manageBalancerConnection(wg *sync.WaitGroup) {
 	defer wg.Done()
 	go c.sendHealth()
-	defer log.Println("ended manage balancer")
+	defer log.Debugln("ended balancer connection management")
 	for c.state == Active || c.state == Paused {
 		message, err := c.comm.ReadLine()
 		if err != nil {
-			log.Println("Read timeout exceeded. Stopping")
+			log.Errorln("Read timeout exceeded. Stopping")
 			c.gracefulStop()
 			return
 		}
 
 		tokens := strings.Split(message, " ")
 		if len(tokens) < 1 {
-			log.Println("Empty message received from server")
+			log.Debugln("Empty message received from server")
 			continue
 		}
 
 		switch tokens[0] {
 		case "INVALID":
-			log.Println(message)
+			log.Debugln(message)
 
 		case "DEREGISTERED":
 			c.state = Deregistering
@@ -88,10 +85,10 @@ func (c *Client) manageBalancerConnection(wg *sync.WaitGroup) {
 
 		case "HEALTHACK":
 			if len(tokens) < 2 {
-				log.Println("HEALTHACK received from server with no status code")
+				log.Debugln("HEALTHACK received from server with no status code")
 			}
 		default:
-			log.Println("Message received from server not matching spec: " + message)
+			log.Debugln("Message received from server not matching spec: " + message)
 		}
 	}
 
@@ -99,9 +96,9 @@ func (c *Client) manageBalancerConnection(wg *sync.WaitGroup) {
 
 func (c *Client) sendHealth() {
 	for c.state == Active || c.state == Paused {
-		log.Println("sending health")
+		log.Debugln("sending health")
 		c.comm.WriteLine("HEALTH 200")
-		time.Sleep(HEALTH_RATE * time.Second)
+		time.Sleep(time.Duration(c.healthRate) * time.Second)
 	}
 }
 
@@ -185,7 +182,7 @@ func (c *Client) handlePackets(pool *sync.Pool) {
 		packet := <-c.packets
 		err := syscall.Sendto(fd, packet.payload[:packet.size], 0, &addr)
 		if err != nil {
-			log.Println("Failed to write packet to local vip")
+			log.Warnln("Failed to write packet to local vip")
 		}
 
 		pool.Put(packet)
@@ -205,7 +202,7 @@ func (c *Client) gracefulStop() {
 	c.dataListener.Close()
 	c.detachVIP()
 	if r := recover(); r != nil {
-		log.Println(r)
+		log.Errorln(r)
 	}
 	os.Exit(0)
 }

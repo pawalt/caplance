@@ -1,20 +1,15 @@
 package backends
 
 import (
-	"log"
 	"math/rand"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/pwpon500/caplance/pkg/util"
-)
+	log "github.com/sirupsen/logrus"
 
-const (
-	REGISTER_TIMEOUT = 10
-	READ_TIMEOUT     = 30
-	WRITE_TIMEOUT    = 5
+	"github.com/pwpon500/caplance/pkg/util"
 )
 
 type managedBackend struct {
@@ -30,10 +25,12 @@ type Manager struct {
 	listenPort      int                        // port to listen on
 	handler         *Handler                   // handler for backends
 	managedBackends map[string]*managedBackend // map of backend name to its communicator
+	readTimeout     int
+	writeTimeout    int
 }
 
 // NewManager instantiates a new instance of the Manager object
-func NewManager(ip net.IP, port, capacity int) (*Manager, error) {
+func NewManager(ip net.IP, port, capacity, readTimeout, writeTimeout int) (*Manager, error) {
 	handler, err := NewHandler(capacity)
 
 	if err != nil {
@@ -44,7 +41,9 @@ func NewManager(ip net.IP, port, capacity int) (*Manager, error) {
 		listenIP:        ip,
 		listenPort:      port,
 		handler:         handler,
-		managedBackends: make(map[string]*managedBackend)}, nil
+		managedBackends: make(map[string]*managedBackend),
+		readTimeout:     readTimeout,
+		writeTimeout:    writeTimeout}, nil
 }
 
 // Listen listens for new connections, registering them if needed
@@ -53,12 +52,12 @@ func (m *Manager) Listen() {
 	var err error
 	m.listener, err = net.Listen("tcp", m.listenIP.String()+":"+strconv.Itoa(m.listenPort))
 	if err != nil {
-		log.Panic(err)
+		log.Panicln(err)
 	}
 	for {
 		conn, err := m.listener.Accept()
 		if err != nil {
-			log.Println(err)
+			log.Debugln(err)
 		}
 		go m.attemptRegister(conn)
 	}
@@ -77,11 +76,11 @@ func (m *Manager) GetBackends() []*Backend {
 // registration message should be in the following format:
 // REGISTER <desired_name> <ip>
 func (m *Manager) attemptRegister(conn net.Conn) {
-	comm := util.NewTCPCommunicator(conn, READ_TIMEOUT, WRITE_TIMEOUT)
+	comm := util.NewTCPCommunicator(conn, m.readTimeout, m.writeTimeout)
 
 	response, err := comm.ReadLine()
 	if err != nil {
-		log.Println(err)
+		log.Debugln(err)
 		conn.Close()
 		return
 	}
@@ -97,7 +96,7 @@ func (m *Manager) attemptRegister(conn net.Conn) {
 
 	cleaner, err := regexp.Compile("[^a-zA-Z0-9-_.]+")
 	if err != nil {
-		log.Panic(err)
+		log.Panicln(err)
 	}
 	cleanedName := cleaner.ReplaceAllString(tokens[1], "")
 
@@ -110,7 +109,7 @@ func (m *Manager) attemptRegister(conn net.Conn) {
 
 	err = m.handler.Add(cleanedName, ip)
 	if err != nil {
-		log.Println(err)
+		log.Infoln(err)
 		conn.Close()
 		return
 	}
@@ -124,7 +123,7 @@ func (m *Manager) attemptRegister(conn net.Conn) {
 		comm.WriteLine("INVALID error while trying to read sanity check")
 		conn.Close()
 		m.handler.Remove(cleanedName)
-		log.Println("Error while trying to sanity check: " + err.Error())
+		log.Infoln("Error while trying to sanity check: " + err.Error())
 	}
 
 	sanityTokens := strings.Split(sanityResponse, " ")
@@ -132,7 +131,7 @@ func (m *Manager) attemptRegister(conn net.Conn) {
 		comm.WriteLine("INVALID bad sanity check url")
 		conn.Close()
 		m.handler.Remove(cleanedName)
-		log.Println("Client udp sanity check failed")
+		log.Infoln("Client udp sanity check failed")
 		return
 	}
 
@@ -155,10 +154,10 @@ func (m *Manager) monitor(name string) {
 		message, err := comm.ReadLine()
 		if err != nil {
 			if errChk, ok := err.(net.Error); ok && errChk.Timeout() {
-				log.Println(err)
+				log.Warnln(err)
 				m.deregisterClient(name, "health check timeout ran out")
 			} else {
-				log.Println(err)
+				log.Warnln(err)
 				m.deregisterClient(name, "error reading from tcp connection: "+err.Error())
 			}
 			return
@@ -218,4 +217,5 @@ func (m *Manager) deregisterClient(name, reason string) {
 	comm := m.managedBackends[name].comm
 	comm.WriteLine("DEREGISTERED " + name + " " + reason)
 	comm.Close()
+	log.Infoln("Deregistered " + name)
 }

@@ -10,12 +10,12 @@ import (
 )
 
 func (c *Client) listenUnix() {
-	if err := os.RemoveAll(SOCKADDR); err != nil {
-		log.Fatal(err)
+	if err := os.RemoveAll(c.sockaddr); err != nil {
+		log.Panicln(err)
 	}
 
 	var err error
-	c.unixSock, err = net.Listen("unix", SOCKADDR)
+	c.unixSock, err = net.Listen("unix", c.sockaddr)
 	if err != nil {
 		log.Panicln(err)
 	}

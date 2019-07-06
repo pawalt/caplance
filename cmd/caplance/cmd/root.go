@@ -13,6 +13,7 @@ type config struct {
 	Client struct {
 		ConnectIP string
 		DataIP    string
+		Name      string
 	}
 	Server struct {
 		MngIP           string
@@ -21,10 +22,9 @@ type config struct {
 	VIP  string
 	Test bool
 
-	HealthRate      int
-	RegisterTimeout int
-	ReadTimeout     int
-	WriteTimeout    int
+	HealthRate   int
+	ReadTimeout  int
+	WriteTimeout int
 
 	Sockaddr string
 }

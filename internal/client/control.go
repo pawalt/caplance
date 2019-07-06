@@ -2,7 +2,6 @@ package client
 
 import (
 	"errors"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -12,18 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/pwpon500/caplance/pkg/util"
 )
 
 // HealthState represents the current state of the client
 type HealthState int
-
-const (
-	REGISTER_TIMEOUT = 10
-	READ_TIMEOUT     = 20
-	WRITE_TIMEOUT    = 5
-	SOCKADDR         = "/var/sock/caplance.sock"
-)
 
 const (
 	// Unregistered represents the client state before registration
@@ -49,6 +43,10 @@ type Client struct {
 	packets      chan *rawPacket   // channel of packets to process
 	stopChan     chan os.Signal    // channel to capture SIGTERM and SIGINT for graceful stop
 	unixSock     net.Listener      // unix sock for communicating with caplancectl
+	readTimeout  int
+	writeTimeout int
+	healthRate   int
+	sockaddr     string
 }
 
 // struct to hold an individual data packet recieved from lb
@@ -58,13 +56,18 @@ type rawPacket struct {
 }
 
 // NewClient creates a new Client object
-func NewClient(vip, dataIP net.IP) *Client {
+func NewClient(name string, vip, dataIP net.IP, readTimeout, writeTimeout, healthRate int, sockaddr string) *Client {
 	return &Client{
-		dataIP:   dataIP,
-		vip:      vip,
-		state:    Unregistered,
-		packets:  make(chan *rawPacket, 100),
-		stopChan: make(chan os.Signal, 5)}
+		dataIP:       dataIP,
+		vip:          vip,
+		state:        Unregistered,
+		name:         name,
+		packets:      make(chan *rawPacket, 100),
+		stopChan:     make(chan os.Signal, 5),
+		readTimeout:  readTimeout,
+		writeTimeout: writeTimeout,
+		healthRate:   healthRate,
+		sockaddr:     sockaddr}
 }
 
 // Start attempts to register and listen for connections
@@ -74,7 +77,7 @@ func (c *Client) Start(connectIP net.IP) error {
 	if err != nil {
 		return err
 	}
-	c.comm = util.NewTCPCommunicator(conn, READ_TIMEOUT, WRITE_TIMEOUT)
+	c.comm = util.NewTCPCommunicator(conn, c.readTimeout, c.writeTimeout)
 
 	ender := func() { c.comm.Close() }
 
@@ -103,7 +106,7 @@ func (c *Client) Start(connectIP net.IP) error {
 
 	sanityString := ""
 	buf := make([]byte, mtu)
-	sanityFailTime := time.Now().Add(READ_TIMEOUT * time.Second)
+	sanityFailTime := time.Now().Add(time.Duration(c.readTimeout) * time.Second)
 	for !strings.HasPrefix(sanityString, "SANITY") && !time.Now().After(sanityFailTime) {
 		n, _, err := c.dataListener.ReadFrom(buf)
 		if err != nil {
@@ -116,7 +119,7 @@ func (c *Client) Start(connectIP net.IP) error {
 	sanitySplit := strings.Split(sanityString, " ")
 	if sanitySplit[0] != "SANITY" || len(sanitySplit) < 2 {
 		ender()
-		return errors.New("failed to complete sanity check in " + strconv.Itoa(READ_TIMEOUT) + " seconds.")
+		return errors.New("failed to complete sanity check in " + strconv.Itoa(c.readTimeout) + " seconds.")
 	}
 
 	c.comm.WriteLine("SANE " + sanitySplit[1])
@@ -146,7 +149,7 @@ func (c *Client) Start(connectIP net.IP) error {
 	go func() {
 		defer c.gracefulStop()
 		sig := <-c.stopChan
-		log.Printf("caught sig: %+v \n", sig)
+		log.Infof("caught sig: %+v \n", sig)
 		c.stopChan <- sig
 	}()
 
